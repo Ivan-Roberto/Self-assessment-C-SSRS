@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>แบบคัดกรองตนเอง C-SSRS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Noto+Serif+Thai:wght@600;700&display=swap">
+<style>
+/* Layout: a clinical intake form on the left, a live triage ladder on the right; stacks to one column on phones */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --ink: #1d2b2a;
+  --muted: #5c6b69;
+  --line: #d9dfdc;
+  --accent: #1f6f66;
+  --accent-soft: #e2efec;
+  --high: #b3261e;      --high-soft: #fbe9e7;
+  --mod: #a35c00;       --mod-soft: #fdf0dc;
+  --low: #2f5f9e;       --low-soft: #e6eef9;
+  --none: #4e6b4a;      --none-soft: #e8f0e6;
+  --font-display: "Noto Serif Thai", Georgia, serif;
+  --font-body: "IBM Plex Sans Thai", "Leelawadee UI", "Thonburi", system-ui, sans-serif;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121817; --surface: #1a2221; --ink: #e4ebe9; --muted: #9aaba8; --line: #2e3a38;
+    --accent: #5fbfb2; --accent-soft: #1d3330;
+    --high: #ff8a80; --high-soft: #3a1d1b;
+    --mod: #f0b45a; --mod-soft: #362812;
+    --low: #8fb6ef; --low-soft: #1c2a3d;
+    --none: #9cc596; --none-soft: #1f2e1d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121817; --surface: #1a2221; --ink: #e4ebe9; --muted: #9aaba8; --line: #2e3a38;
+  --accent: #5fbfb2; --accent-soft: #1d3330;
+  --high: #ff8a80; --high-soft: #3a1d1b;
+  --mod: #f0b45a; --mod-soft: #362812;
+  --low: #8fb6ef; --low-soft: #1c2a3d;
+  --none: #9cc596; --none-soft: #1f2e1d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.65;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; }
+
+.emergency {
+  display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between;
+  margin: 16px 0 0; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--high-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--high) 35%, transparent);
+  font-size: 15px;
+}
+.emergency strong { color: var(--high); }
+.numbers { display: flex; flex-wrap: wrap; gap: 6px 18px; font-variant-numeric: tabular-nums; }
+.numbers span b { font-size: 18px; color: var(--high); margin-right: 4px; user-select: all; }
+
+header { padding: 28px 0 8px; }
+.draft {
+  display: inline-block; font-size: 12px; letter-spacing: .06em; font-weight: 600;
+  color: var(--accent); background: var(--accent-soft); padding: 3px 10px; border-radius: 99px;
+}
+h1 { font-family: var(--font-display); font-size: clamp(24px, 4vw, 32px); line-height: 1.35; margin: 12px 0 6px; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 62ch; margin: 0; }
+
+.demo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 6px; font-size: 14px; color: var(--muted); }
+.demo button {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer;
+}
+.demo button:hover { border-color: var(--accent); }
+.demo button:focus-visible, .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; margin-top: 14px; align-items: start; }
+@media (max-width: 820px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Questions */
+.form { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.form-head { padding: 14px 20px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.q { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); transition: opacity .2s; }
+.q:last-child { border-bottom: 0; }
+.q .n { font-family: var(--font-display); font-size: 20px; color: var(--accent); line-height: 1.4; font-variant-numeric: tabular-nums; }
+.q.sub { padding-top: 0; border-bottom-style: solid; }
+.q.sub .n { font-size: 14px; color: var(--muted); }
+.q p { margin: 0 0 10px; }
+.q .hint { font-size: 13px; color: var(--muted); margin: -4px 0 10px; }
+.q.skipped { opacity: .45; }
+.q.skipped .seg { pointer-events: none; }
+.q .skipnote { display: none; font-size: 13px; color: var(--muted); }
+.q.skipped .skipnote { display: block; }
+.q.skipped .seg { display: none; }
+.q.trigger { background: color-mix(in srgb, var(--tier) 7%, transparent); box-shadow: inset 3px 0 0 var(--tier); }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg label { position: relative; cursor: pointer; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: block; padding: 6px 20px; font-size: 15px; min-width: 76px; text-align: center; }
+.seg label + label span { border-left: 1px solid var(--line); }
+.seg input:checked + span { background: var(--ink); color: var(--surface); font-weight: 600; }
+
+/* Ladder */
+.side { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); display: grid; gap: 12px; }
+@media (max-width: 820px) { .side { position: static; } }
+.side h2 { font-family: var(--font-display); font-size: 18px; margin: 0; }
+.status { font-size: 14px; color: var(--muted); margin: -4px 0 2px; }
+.tier {
+  --tier: var(--muted); --tier-soft: transparent;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  padding: 14px 16px; display: grid; gap: 4px; transition: border-color .2s, background .2s, opacity .2s;
+}
+.tier[data-t="high"] { --tier: var(--high); --tier-soft: var(--high-soft); }
+.tier[data-t="mod"]  { --tier: var(--mod);  --tier-soft: var(--mod-soft); }
+.tier[data-t="low"]  { --tier: var(--low);  --tier-soft: var(--low-soft); }
+.tier[data-t="none"] { --tier: var(--none); --tier-soft: var(--none-soft); }
+.tier-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pill { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--tier); border: 1px solid currentColor; border-radius: 99px; padding: 1px 10px; white-space: nowrap; }
+.tier .rule { font-size: 13px; color: var(--muted); }
+.tier .action { font-weight: 600; }
+.contacts { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.contacts li { display: flex; justify-content: space-between; gap: 12px; border-top: 1px dashed var(--line); padding-top: 3px; }
+.contacts span { color: var(--muted); min-width: 0; }
+.contacts b { font-variant-numeric: tabular-nums; white-space: nowrap; user-select: all; }
+.side.has-result .tier:not(.on) .contacts { display: none; }
+.tier .why { display: none; font-size: 13px; color: var(--tier); }
+.side.has-result .tier { opacity: .5; }
+.side.has-result .tier.on { opacity: 1; border-color: var(--tier); background: var(--tier-soft); box-shadow: 0 0 0 1px var(--tier); }
+.side.has-result .tier.on .why { display: block; }
+.tier.on[data-t="high"] .action { font-size: 18px; color: var(--high); }
+
+.note { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+.note p { margin: 0 0 6px; }
+.reset { justify-self: start; font: inherit; font-size: 14px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+
+/* phone: sticky result chip */
+.chip {
+  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: var(--surface); border-top: 1px solid var(--line); font-size: 15px;
+}
+.chip a { color: var(--accent); }
+@media (max-width: 820px) { .chip.show { display: flex; justify-content: space-between; gap: 12px; align-items: center; } }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <div class="emergency" role="note">
+    <div><strong>อันตรายตอนนี้?</strong> ไม่ต้องทำแบบคัดกรองให้จบ ไป ER หรือโทรทันที</div>
+    <div class="numbers">
+      <span><b>1669</b>รถพยาบาล</span>
+      <span><b>1323</b>สายด่วนสุขภาพจิต</span>
+      <span><b>191</b>ตำรวจ</span>
+    </div>
+  </div>
+
+  <header>
+    <span class="draft">ต้นแบบ · รอภาควิชาจิตเวชศาสตร์อนุมัติ</span>
+    <h1>แบบคัดกรองตนเองอย่างย่อ (อ้างอิง C-SSRS)</h1>
+    <p class="lede">ตอบ 6 ข้อเกี่ยวกับช่วง 1 เดือนที่ผ่านมา ระบบจะจัดระดับความเสี่ยงและบอกช่องทางที่ควรไปตามข้อเสนอในหัวข้อที่ 3 คำตอบไม่ถูกบันทึกหรือส่งไปที่ใด</p>
+  </header>
+
+  <div class="demo" aria-label="ตัวอย่างสำหรับผู้พิจารณา">
+    ดูตัวอย่างผลลัพธ์:
+    <button type="button" data-demo="high" id="demo-high">ระดับสูง</button>
+    <button type="button" data-demo="mod" id="demo-mod">ปานกลาง</button>
+    <button type="button" data-demo="low" id="demo-low">ต่ำกว่า</button>
+    <button type="button" data-demo="none" id="demo-none">ตอบไม่ใช่ทุกข้อ</button>
+  </div>
+
+  <div class="grid">
+    <form class="form" id="form" autocomplete="off">
+      <div class="form-head"><span>ในช่วง 1 เดือนที่ผ่านมา…</span><span id="progress">ตอบแล้ว 0 ข้อ</span></div>
+
+      <div class="q" data-q="q1">
+        <div class="n">1</div>
+        <div>
+          <p>คุณเคยอยากตาย หรืออยากนอนหลับไปแล้วไม่ตื่นขึ้นมาอีกหรือไม่</p>
+          <div class="seg"><label><input type="radio" name="q1" id="q1-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q1" id="q1-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q" data-q="q2">
+        <div class="n">2</div>
+        <div>
+          <p>คุณเคยมีความคิดที่จะฆ่าตัวตายจริง ๆ หรือไม่</p>
+          <p class="hint">ถ้าตอบ "ไม่ใช่" ให้ข้ามไปข้อ 6</p>
+          <div class="seg"><label><input type="radio" name="q2" id="q2-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q2" id="q2-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q" data-q="q3" data-needs="q2">
+        <div class="n">3</div>
+        <div>
+          <p>คุณเคยคิดว่าจะทำอย่างไรหรือไม่</p>
+          <span class="skipnote">ข้าม เพราะข้อ 2 ตอบว่าไม่ใช่</span>
+          <div class="seg"><label><input type="radio" name="q3" id="q3-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q3" id="q3-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q" data-q="q4" data-needs="q2">
+        <div class="n">4</div>
+        <div>
+          <p>คุณเคยมีความคิดเหล่านี้ร่วมกับมีเจตนาที่จะลงมือทำบ้างหรือไม่</p>
+          <span class="skipnote">ข้าม เพราะข้อ 2 ตอบว่าไม่ใช่</span>
+          <div class="seg"><label><input type="radio" name="q4" id="q4-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q4" id="q4-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q" data-q="q5" data-needs="q2">
+        <div class="n">5</div>
+        <div>
+          <p>คุณได้เริ่มวางแผน หรือวางแผนรายละเอียดของวิธีฆ่าตัวตายไว้แล้วหรือไม่ และตั้งใจจะทำตามแผนนั้นหรือไม่</p>
+          <span class="skipnote">ข้าม เพราะข้อ 2 ตอบว่าไม่ใช่</span>
+          <div class="seg"><label><input type="radio" name="q5" id="q5-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q5" id="q5-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q" data-q="q6">
+        <div class="n">6</div>
+        <div>
+          <p>คุณเคยทำ เริ่มทำ หรือเตรียมการทำสิ่งใดเพื่อจบชีวิตตนเองหรือไม่</p>
+          <p class="hint">เช่น เก็บสะสมยา เขียนจดหมายลา หรือเริ่มลงมือแล้วหยุดหรือถูกห้ามไว้</p>
+          <div class="seg"><label><input type="radio" name="q6" id="q6-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q6" id="q6-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+
+      <div class="q sub" data-q="q6r" data-needs="q6" hidden>
+        <div class="n">6.1</div>
+        <div>
+          <p>เกิดขึ้นภายใน 3 เดือนที่ผ่านมาหรือไม่</p>
+          <div class="seg"><label><input type="radio" name="q6r" id="q6r-y" value="y"><span>ใช่</span></label><label><input type="radio" name="q6r" id="q6r-n" value="n"><span>ไม่ใช่</span></label></div>
+        </div>
+      </div>
+    </form>
+
+    <aside class="side" id="side" aria-live="polite">
+      <h2 id="result">ระดับความเสี่ยง</h2>
+      <p class="status" id="status">ยังไม่ได้ตอบ ผลจะแสดงที่นี่ทันทีที่ตอบ</p>
+
+      <div class="tier" data-t="high">
+        <div class="tier-top"><span class="action">ไป ER ทันที ห้ามอยู่คนเดียว</span><span class="pill">สูง</span></div>
+        <div class="rule">ตอบ "ใช่" ข้อ 4, 5 หรือ 6 ภายใน 3 เดือน</div>
+        <ul class="contacts">
+          <li><span>ห้องฉุกเฉิน รพ.มหาราชนครเชียงใหม่ (24 ชม.)</span><b>Walk-in</b></li>
+          <li><span>หมดสติ กินยาเกินขนาด หรือกำลังทำร้ายตนเอง</span><b>1669</b></li>
+        </ul>
+        <div class="why"></div>
+      </div>
+      <div class="tier" data-t="mod">
+        <div class="tier-top"><span class="action">พบพี่จีน นักจิตวิทยาประจำคณะ ภายในวันนี้</span><span class="pill">ปานกลาง</span></div>
+        <div class="rule">ตอบ "ใช่" ข้อ 3 หรือข้อ 6 ที่นานกว่า 3 เดือน</div>
+        <ul class="contacts">
+          <li><span>พี่จีน (ผ่านงานกิจการนักศึกษา)</span><b>053 935 271</b></li>
+          <li><span>สายด่วนภาควิชาจิตเวชศาสตร์</span><b>053 935 427</b></li>
+          <li><span>นอกเวลาทำการ สายด่วนสุขภาพจิต</span><b>1323</b></li>
+        </ul>
+        <div class="rule">ไป ER หากอาการแย่ลง</div>
+        <div class="why"></div>
+      </div>
+      <div class="tier" data-t="low">
+        <div class="tier-top"><span class="action">นัดพี่จีน นักจิตวิทยาประจำคณะ ภายในสัปดาห์นี้</span><span class="pill">ต่ำกว่า</span></div>
+        <div class="rule">ตอบ "ใช่" เฉพาะข้อ 1 หรือ 2</div>
+        <ul class="contacts">
+          <li><span>พี่จีน (เวลาราชการ)</span><b>053 935 271</b></li>
+          <li><span>LINE</span><b>@413hhyaf</b></li>
+          <li><span>นัดจิตแพทย์ที่ OPD24 ชั้น 2 (หากได้รับการส่งต่อ)</span><b>053 935 755</b></li>
+        </ul>
+        <div class="why"></div>
+      </div>
+      <div class="tier" data-t="none">
+        <div class="tier-top"><span class="action">ไม่พบความเสี่ยงจากแบบคัดกรองนี้</span><span class="pill">ไม่พบ</span></div>
+        <div class="rule">ยังเครียดหรือทุกข์ใจอยู่? ติดต่อได้เสมอ (หัวข้อที่ 4)</div>
+        <ul class="contacts">
+          <li><span>พี่จีน นักจิตวิทยาประจำคณะ</span><b>053 935 271</b></li>
+          <li><span>CMU Mind (จ.–ศ. 08:30–16:30)</span><b>097 924 8000</b></li>
+          <li><span>บ้านหลังที่ 2 (จ.–ศ. 09:30–17:00)</span><b>083 585 6046</b></li>
+        </ul>
+        <div class="why"></div>
+      </div>
+
+      <button type="button" class="reset" id="reset">ล้างคำตอบ</button>
+
+      <div class="note">
+        <p>ถ้าไม่แน่ใจว่าเข้าเกณฑ์หรือไม่ ให้ถือว่าเป็นเหตุฉุกเฉิน และเกณฑ์อื่นในหัวข้อที่ 1 (เช่น ทำร้ายตนเองจนบาดเจ็บ หูแว่ว เมาร่วมกับพูดถึงความตาย) ก็ส่ง ER ได้โดยไม่ต้องดูผลนี้</p>
+        <p>คำถามแปลโดยผู้จัดทำ ไม่ใช่ C-SSRS ฉบับภาษาไทยที่ผ่านการรับรอง ต้นแบบนี้ใช้เพื่อพิจารณาเท่านั้น ไม่ใช่เครื่องมือวินิจฉัย</p>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="chip" id="chip"><span id="chip-text"></span><a href="#result">ดูผล</a></div>
+
+<script>
+(function () {
+  const form = document.getElementById('form');
+  const side = document.getElementById('side');
+  const statusEl = document.getElementById('status');
+  const progress = document.getElementById('progress');
+  const chip = document.getElementById('chip');
+  const chipText = document.getElementById('chip-text');
+  const tiers = Object.fromEntries([...side.querySelectorAll('.tier')].map(t => [t.dataset.t, t]));
+  const qRow = n => form.querySelector('.q[data-q="' + n + '"]');
+  const val = n => { const el = form.querySelector('input[name="' + n + '"]:checked'); return el ? el.value : null; };
+  const yes = n => val(n) === 'y';
+  const LABEL = { high: 'สูง', mod: 'ปานกลาง', low: 'ต่ำกว่า', none: 'ไม่พบความเสี่ยง' };
+  const COLOR = { high: 'var(--high)', mod: 'var(--mod)', low: 'var(--low)', none: 'var(--none)' };
+
+  function clear(name) { form.querySelectorAll('input[name="' + name + '"]').forEach(i => { i.checked = false; }); }
+
+  // Which questions apply, following the C-SSRS screener skip logic
+  function applicable() {
+    const list = ['q1', 'q2'];
+    if (val('q2') !== 'n') list.push('q3', 'q4', 'q5');
+    list.push('q6');
+    if (yes('q6')) list.push('q6r');
+    return list;
+  }
+
+  // Routing from section 3 of the proposal
+  function classify() {
+    const a = applicable();
+    const answered = a.filter(n => val(n) !== null);
+    const done = answered.length === a.length;
+    let tier = null, why = [];
+    if (yes('q4')) why.push('ข้อ 4');
+    if (yes('q5')) why.push('ข้อ 5');
+    if (yes('q6') && yes('q6r')) why.push('ข้อ 6 ภายใน 3 เดือน');
+    if (why.length) tier = 'high';
+    else {
+      if (yes('q3')) why.push('ข้อ 3');
+      if (yes('q6') && val('q6r') === 'n') why.push('ข้อ 6 นานกว่า 3 เดือน');
+      if (why.length) tier = 'mod';
+      else {
+        if (yes('q1')) why.push('ข้อ 1');
+        if (yes('q2')) why.push('ข้อ 2');
+        if (why.length) tier = 'low';
+        else if (done) tier = 'none';
+      }
+    }
+    return { tier, why, done, answered: answered.length, total: a.length };
+  }
+
+  function render() {
+    const a = applicable();
+    ['q3', 'q4', 'q5'].forEach(n => {
+      const skip = val('q2') === 'n';
+      qRow(n).classList.toggle('skipped', skip);
+      if (skip) clear(n);
+    });
+    const r6 = qRow('q6r');
+    r6.hidden = !yes('q6');
+    if (r6.hidden) clear('q6r');
+
+    const r = classify();
+    progress.textContent = 'ตอบแล้ว ' + r.answered + ' จาก ' + r.total + ' ข้อ';
+
+    Object.values(tiers).forEach(t => t.classList.remove('on'));
+    form.querySelectorAll('.q').forEach(q => { q.classList.remove('trigger'); q.style.removeProperty('--tier'); });
+    side.classList.toggle('has-result', !!r.tier);
+
+    if (!r.tier) {
+      statusEl.textContent = r.answered ? 'ตอบต่อให้ครบ ' + (r.total - r.answered) + ' ข้อ เพื่อดูผล' : 'ยังไม่ได้ตอบ ผลจะแสดงที่นี่ทันทีที่ตอบ';
+      chip.classList.remove('show');
+      return;
+    }
+    const t = tiers[r.tier];
+    t.classList.add('on');
+    t.querySelector('.why').textContent = r.why.length ? 'เพราะตอบ "ใช่" ' + r.why.join(', ') : 'ตอบ "ไม่ใช่" ทุกข้อ';
+    if (r.tier === 'high') statusEl.textContent = 'ความเสี่ยงสูง ไม่ต้องตอบข้อที่เหลือ';
+    else if (!r.done) statusEl.textContent = 'ผลเบื้องต้น ตอบอีก ' + (r.total - r.answered) + ' ข้อ ผลอาจสูงขึ้นได้';
+    else statusEl.textContent = 'ผลจากคำตอบทั้งหมด';
+
+    // mark the questions that set the tier
+    const map = { 'ข้อ 1': 'q1', 'ข้อ 2': 'q2', 'ข้อ 3': 'q3', 'ข้อ 4': 'q4', 'ข้อ 5': 'q5', 'ข้อ 6 ภายใน 3 เดือน': 'q6', 'ข้อ 6 นานกว่า 3 เดือน': 'q6' };
+    r.why.forEach(w => { const q = qRow(map[w]); if (q) { q.classList.add('trigger'); q.style.setProperty('--tier', COLOR[r.tier]); } });
+
+    chipText.innerHTML = 'ระดับ: <b style="color:' + COLOR[r.tier] + '">' + LABEL[r.tier] + '</b>';
+    chip.classList.add('show');
+  }
+
+  const DEMOS = {
+    high: { q1: 'y', q2: 'y', q3: 'y', q4: 'y', q5: 'n', q6: 'n' },
+    mod:  { q1: 'y', q2: 'y', q3: 'y', q4: 'n', q5: 'n', q6: 'n' },
+    low:  { q1: 'y', q2: 'n', q6: 'n' },
+    none: { q1: 'n', q2: 'n', q6: 'n' }
+  };
+  function resetAll() { form.reset(); render(); }
+  document.querySelectorAll('[data-demo]').forEach(b => b.addEventListener('click', () => {
+    form.reset();
+    const d = DEMOS[b.dataset.demo];
+    Object.entries(d).forEach(([n, v]) => { const el = document.getElementById(n + '-' + v); if (el) el.checked = true; });
+    render();
+  }));
+  document.getElementById('reset').addEventListener('click', resetAll);
+  form.addEventListener('change', render);
+  form.addEventListener('submit', e => e.preventDefault());
+  render();
+})();
+</script>
+
+</body>
+</html>
